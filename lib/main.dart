@@ -1,8 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'screens/speech_screen.dart';
+import 'utils/logger.dart';
 
 void main() {
+  // Initialize logging
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Set up error handling
+  FlutterError.onError = (FlutterErrorDetails details) {
+    AppLogger.error('Flutter Error', 
+      tag: 'FlutterError',
+      error: details.exception,
+      stackTrace: details.stack,
+    );
+  };
+  
+  AppLogger.info('Starting Flutter Whisper App', tag: 'Main');
   runApp(const MyApp());
 }
 
@@ -11,6 +25,7 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    AppLogger.info('Building MyApp', tag: 'MyApp');
     return MaterialApp(
       title: 'Flutter Whisper STT',
       debugShowCheckedModeBanner: false,

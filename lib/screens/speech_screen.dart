@@ -11,6 +11,7 @@ import '../utils/constants.dart';
 import '../widgets/language_selector.dart';
 import '../widgets/transcription_card.dart';
 import '../widgets/audio_visualizer.dart';
+import '../utils/logger.dart';
 
 class SpeechScreen extends StatefulWidget {
   const SpeechScreen({super.key});
@@ -43,12 +44,14 @@ class _SpeechScreenState extends State<SpeechScreen>
   @override
   void initState() {
     super.initState();
+    AppLogger.info('SpeechScreen initializing', tag: 'SpeechScreen');
     _initializeControllers();
     _checkServerStatus();
     _initializeRecorderController();
   }
 
   void _initializeControllers() {
+    AppLogger.info('Initializing animation controllers', tag: 'SpeechScreen');
     _pulseController = AnimationController(
       duration: const Duration(seconds: 1),
       vsync: this,
@@ -61,28 +64,54 @@ class _SpeechScreenState extends State<SpeechScreen>
   }
 
   void _initializeRecorderController() {
-  _recorderController = RecorderController()
-    ..androidEncoder = AndroidEncoder.aac  // CHANGED: wav -> aac
-    ..androidOutputFormat = AndroidOutputFormat.mpeg4
-    ..iosEncoder = IosEncoder.kAudioFormatLinearPCM         // CHANGED: kAudioFormatLinearPCM -> aac
-    ..sampleRate = 16000;
-}
+    AppLogger.info('Initializing recorder controller', tag: 'SpeechScreen');
+    try {
+      _recorderController = RecorderController()
+        ..androidEncoder = AndroidEncoder.aac
+        ..androidOutputFormat = AndroidOutputFormat.mpeg4
+        ..iosEncoder = IosEncoder.kAudioFormatMPEG4AAC
+        ..sampleRate = 16000;
+      AppLogger.info('Recorder controller initialized successfully', tag: 'SpeechScreen');
+    } catch (e) {
+      AppLogger.error('Error initializing recorder controller', 
+        tag: 'SpeechScreen',
+        error: e,
+        stackTrace: StackTrace.current,
+      );
+    }
+  }
 
   Future<void> _checkServerStatus() async {
+    AppLogger.info('Checking server status', tag: 'SpeechScreen');
+    
+    // ADDED: Try to get ngrok URL from environment or use default
+    final ngrokUrl = const String.fromEnvironment('NGROK_URL', defaultValue: '');
+    if (ngrokUrl.isNotEmpty) {
+      AppLogger.info('Using ngrok URL: $ngrokUrl', tag: 'SpeechScreen');
+      _whisperService.updateBaseUrl(ngrokUrl);
+    }
+    
     final isAvailable = await _whisperService.checkServerHealth();
+    
+    AppLogger.info('Server status check completed - Available: $isAvailable', tag: 'SpeechScreen');
+    
     setState(() {
       _serverAvailable = isAvailable;
     });
     
     if (!isAvailable) {
+      AppLogger.warning('Server not available', tag: 'SpeechScreen');
       _showSnackBar(
         'Server not available. Start Python backend first.',
         Colors.orange,
       );
+    } else {
+      AppLogger.info('Server is available and ready', tag: 'SpeechScreen');
     }
   }
 
   Future<void> _toggleRecording() async {
+    AppLogger.info('Toggle recording - Current state: $_isRecording', tag: 'SpeechScreen');
     if (_isRecording) {
       await _stopRecording();
     } else {
@@ -91,14 +120,19 @@ class _SpeechScreenState extends State<SpeechScreen>
   }
 
   Future<void> _startRecording() async {
+    AppLogger.info('Starting recording process', tag: 'SpeechScreen');
     try {
       if (!_serverAvailable) {
+        AppLogger.warning('Cannot start recording - server not available', tag: 'SpeechScreen');
         _showSnackBar('Server not available', Colors.red);
         return;
       }
 
+      AppLogger.info('Calling audio service to start recording', tag: 'SpeechScreen');
       final recordingPath = await _audioService.startRecording();
+      
       if (recordingPath != null) {
+        AppLogger.info('Recording started successfully at: $recordingPath', tag: 'SpeechScreen');
         setState(() {
           _isRecording = true;
           _currentRecordingPath = recordingPath;
@@ -111,19 +145,29 @@ class _SpeechScreenState extends State<SpeechScreen>
         
         // Start waveform recording if available
         if (_recorderController != null) {
+          AppLogger.info('Starting waveform recording', tag: 'SpeechScreen');
           await _recorderController!.record(path: recordingPath);
         }
       } else {
+        AppLogger.error('Failed to start recording - null path returned', tag: 'SpeechScreen');
         _showSnackBar('Failed to start recording', Colors.red);
       }
     } catch (e) {
+      AppLogger.error('Error starting recording', 
+        tag: 'SpeechScreen',
+        error: e,
+        stackTrace: StackTrace.current,
+      );
       _showSnackBar('Recording error: $e', Colors.red);
     }
   }
 
   Future<void> _stopRecording() async {
+    AppLogger.info('Stopping recording process', tag: 'SpeechScreen');
     try {
       final recordingPath = await _audioService.stopRecording();
+      
+      AppLogger.info('Recording stopped, path: $recordingPath', tag: 'SpeechScreen');
       
       setState(() {
         _isRecording = false;
@@ -134,15 +178,23 @@ class _SpeechScreenState extends State<SpeechScreen>
       
       // Stop waveform recording
       if (_recorderController != null && _recorderController!.isRecording) {
+        AppLogger.info('Stopping waveform recording', tag: 'SpeechScreen');
         await _recorderController!.stop();
       }
 
       if (recordingPath != null) {
+        AppLogger.info('Starting transcription for: $recordingPath', tag: 'SpeechScreen');
         await _transcribeAudio(recordingPath);
       } else {
+        AppLogger.warning('No recording path available for transcription', tag: 'SpeechScreen');
         _showSnackBar('No recording found', Colors.orange);
       }
     } catch (e) {
+      AppLogger.error('Error stopping recording', 
+        tag: 'SpeechScreen',
+        error: e,
+        stackTrace: StackTrace.current,
+      );
       setState(() {
         _isRecording = false;
         _isTranscribing = false;
@@ -152,6 +204,7 @@ class _SpeechScreenState extends State<SpeechScreen>
   }
 
   Future<void> _transcribeAudio(String audioPath) async {
+    AppLogger.info('Starting transcription for: $audioPath', tag: 'SpeechScreen');
     setState(() {
       _isTranscribing = true;
     });
@@ -159,16 +212,47 @@ class _SpeechScreenState extends State<SpeechScreen>
     try {
       final file = File(audioPath);
       if (!await file.exists()) {
+        AppLogger.error('Audio file not found: $audioPath', tag: 'SpeechScreen');
         throw Exception('Audio file not found');
       }
+      
+      final fileSize = await file.length();
+      AppLogger.info('Audio file validated - Size: $fileSize bytes', tag: 'SpeechScreen');
 
+      AppLogger.info('Calling whisper service for transcription', 
+        tag: 'SpeechScreen',
+        data: {
+          'language': _selectedLanguage,
+          'modelSize': _selectedModel,
+          'fileSize': fileSize,
+        }
+      );
+      
       final response = await _whisperService.transcribeAudio(
         audioFile: file,
         language: _selectedLanguage,
         modelSize: _selectedModel,
       );
 
+      AppLogger.info('Transcription response received', 
+        tag: 'SpeechScreen',
+        data: {
+          'success': response?.success,
+          'hasResult': response?.result != null,
+          'message': response?.message,
+        }
+      );
+
       if (response != null && response.success && response.result != null) {
+        AppLogger.info('Transcription successful', 
+          tag: 'SpeechScreen',
+          data: {
+            'textLength': response.result!.text.length,
+            'language': response.result!.language,
+            'segmentCount': response.result!.segments.length,
+          }
+        );
+        
         setState(() {
           _lastResult = response.result;
           _transcriptionHistory.insert(0, response.result!);
@@ -181,12 +265,19 @@ class _SpeechScreenState extends State<SpeechScreen>
 
         _showSnackBar('Transcription completed!', Colors.green);
       } else {
+        final errorMsg = response?.message ?? 'Transcription failed';
+        AppLogger.error('Transcription failed: $errorMsg', tag: 'SpeechScreen');
         _showSnackBar(
-          response?.message ?? 'Transcription failed',
+          errorMsg,
           Colors.red,
         );
       }
     } catch (e) {
+      AppLogger.error('Transcription error', 
+        tag: 'SpeechScreen',
+        error: e,
+        stackTrace: StackTrace.current,
+      );
       _showSnackBar('Transcription error: $e', Colors.red);
     } finally {
       setState(() {
@@ -195,9 +286,10 @@ class _SpeechScreenState extends State<SpeechScreen>
       
       // Clean up audio file
       try {
+        AppLogger.info('Cleaning up audio file: $audioPath', tag: 'SpeechScreen');
         await File(audioPath).delete();
       } catch (e) {
-        print('Failed to delete temp file: $e');
+        AppLogger.warning('Failed to delete temp file', tag: 'SpeechScreen', error: e);
       }
     }
   }
@@ -223,6 +315,7 @@ class _SpeechScreenState extends State<SpeechScreen>
   }
 
   void _showSnackBar(String message, Color color) {
+    AppLogger.info('Showing snackbar: $message', tag: 'SpeechScreen');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -234,6 +327,7 @@ class _SpeechScreenState extends State<SpeechScreen>
   }
 
   void _clearHistory() {
+    AppLogger.info('Clearing transcription history', tag: 'SpeechScreen');
     setState(() {
       _transcriptionHistory.clear();
       _lastResult = null;
@@ -283,6 +377,12 @@ class _SpeechScreenState extends State<SpeechScreen>
             icon: const Icon(Icons.clear_all),
             tooltip: 'Clear history',
           ),
+          // ADDED: Settings button for ngrok URL
+          IconButton(
+            onPressed: () => _showSettingsDialog(),
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+          ),
         ],
       ),
       body: Column(
@@ -299,6 +399,7 @@ class _SpeechScreenState extends State<SpeechScreen>
                       child: LanguageSelector(
                         selectedLanguage: _selectedLanguage,
                         onLanguageChanged: (language) {
+                          AppLogger.info('Language changed to: $language', tag: 'SpeechScreen');
                           setState(() {
                             _selectedLanguage = language;
                           });
@@ -338,6 +439,7 @@ class _SpeechScreenState extends State<SpeechScreen>
                         }).toList(),
                         onChanged: (value) {
                           if (value != null) {
+                            AppLogger.info('Model changed to: $value', tag: 'SpeechScreen');
                             setState(() {
                               _selectedModel = value;
                             });
@@ -527,10 +629,12 @@ class _SpeechScreenState extends State<SpeechScreen>
                                 result: _transcriptionHistory[index],
                                 isLatest: index == 0,
                                 onCopy: (text) {
+                                  AppLogger.info('Text copied to clipboard', tag: 'SpeechScreen');
                                   // Implement clipboard copy
                                   _showSnackBar('Copied to clipboard', Colors.green);
                                 },
                                 onDelete: () {
+                                  AppLogger.info('Deleting transcription at index: $index', tag: 'SpeechScreen');
                                   setState(() {
                                     _transcriptionHistory.removeAt(index);
                                   });
@@ -547,9 +651,60 @@ class _SpeechScreenState extends State<SpeechScreen>
       ),
     );
   }
+  
+  // ADDED: Settings dialog for ngrok URL
+  void _showSettingsDialog() {
+    final TextEditingController urlController = TextEditingController(
+      text: _whisperService.baseUrl,
+    );
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Server Settings'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: 'Server URL',
+                hintText: 'https://your-ngrok-url.ngrok.io',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Enter your ngrok URL or server address',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final newUrl = urlController.text.trim();
+              if (newUrl.isNotEmpty) {
+                AppLogger.info('Updating server URL to: $newUrl', tag: 'SpeechScreen');
+                _whisperService.updateBaseUrl(newUrl);
+                Navigator.pop(context);
+                _checkServerStatus();
+              }
+            },
+            child: const Text('Update'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   void dispose() {
+    AppLogger.info('Disposing SpeechScreen', tag: 'SpeechScreen');
     _pulseController.dispose();
     _waveController.dispose();
     _recorderController?.dispose();

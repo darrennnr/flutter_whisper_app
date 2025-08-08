@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_whisper_app/models/language_model.dart';
 import '../models/transcription_model.dart';
+import '../models/language_model.dart';
 import '../utils/constants.dart';
+import '../utils/logger.dart';
 
 class TranscriptionCard extends StatefulWidget {
   final TranscriptionResult result;
@@ -47,6 +48,7 @@ class _TranscriptionCardState extends State<TranscriptionCard> {
   }
 
   Future<void> _copyToClipboard() async {
+    AppLogger.info('Copying text to clipboard', tag: 'TranscriptionCard');
     await Clipboard.setData(ClipboardData(text: widget.result.text));
     if (widget.onCopy != null) {
       widget.onCopy!(widget.result.text);
@@ -168,6 +170,7 @@ class _TranscriptionCardState extends State<TranscriptionCard> {
                   // Actions
                   PopupMenuButton<String>(
                     onSelected: (value) {
+                      AppLogger.info('Transcription card action: $value', tag: 'TranscriptionCard');
                       switch (value) {
                         case 'copy':
                           _copyToClipboard();
